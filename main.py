@@ -12,6 +12,8 @@ import urllib.request
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+import asyncio
+from contextlib import asynccontextmanager
 
 ##########
 # CONFIG #
@@ -36,7 +38,7 @@ LON_IP = g.latlng[1]
 # AERODROME DATA #
 ##################
 
-def get_aerodromes(lat_center: float, lon_center: float, radius_deg=None, airport_types=None) -> list[dict]:
+def _get_aerodromes_sync(lat_center: float, lon_center: float, radius_deg=None, airport_types=None) -> list[dict]:
     """
     Get aerodromes within a specified radius of a given latitude and longitude.
 
@@ -77,11 +79,15 @@ def get_aerodromes(lat_center: float, lon_center: float, radius_deg=None, airpor
 
     return aerodromes
 
+async def get_aerodromes(lat_center: float, lon_center: float, radius_deg=None, airport_types=None) -> list[dict]:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _get_aerodromes_sync, lat_center, lon_center, radius_deg, airport_types)
+
 ####################
 # OPENSKY API CALL #
 ####################
 
-def fetch_aircraft(lat: float, lon: float, radius_deg: float) -> list[dict]:
+def _fetch_aircraft_sync(lat: float, lon: float, radius_deg: float) -> list[dict]:
     """
     Fetch aircraft data from the OpenSky API within a specified radius of a given latitude and longitude.
 
@@ -125,6 +131,10 @@ def fetch_aircraft(lat: float, lon: float, radius_deg: float) -> list[dict]:
 
     return aircraft
 
+async def fetch_aircraft(lat: float, lon: float, radius_deg: float) -> list[dict]:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _fetch_aircraft_sync, lat, lon, radius_deg)
+
 ########################
 # MUTABLE SERVER STATE #
 ########################
@@ -142,3 +152,73 @@ connected_clients: list[WebSocket] = []
 # WEBSOCKET BROADCAST #
 #######################
 
+async def broadcast(message: dict):
+    """
+    Broadcast a message to all connected WebSocket clients.
+
+    :param message: The message to broadcast
+    """
+    if not connected_clients:
+        print("[DEBUG] No connected clients to broadcast to.")
+        return
+
+    data = json.dumps(message)
+    disconnected_clients = []
+
+    for client in connected_clients:
+        try:
+            await client.send_text(data)
+        except WebSocketDisconnect:
+            disconnected_clients.append(client)
+        except Exception as e:
+            print(f"[DEBUG] Error sending message to client: {e}")
+            disconnected_clients.append(client)
+
+    for client in disconnected_clients:
+        connected_clients.remove(client)
+        print("[DEBUG] Removed disconnected client.")
+
+###################
+# BACKGROUND TASKS#
+###################
+
+async def poll_aircraft():
+    """
+    Poll aircraft data from the OpenSky API at regular intervals and broadcast updates to connected clients.
+    """
+
+    fail_count = 0
+
+    while True:
+        lat = state['lat']
+        lon = state['lon']
+        radius = RADIUS_DEG
+
+        aircraft = await fetch_aircraft(lat, lon, radius)
+
+        if aircraft or fail_count == 0:
+            fail_count = 0
+
+            state['aircraft'] = aircraft
+
+            await broadcast({
+                'type': 'aircraft_update',
+                'data': aircraft,
+                'interval': POLL_INTERVAL
+                })
+        else:
+            fail_count += 1
+            backoff = min(fail_count * 10, 60)
+            print(f"[DEBUG] Failed to fetch aircraft data. Consecutive failures: {fail_count}")
+            print(f"[DEBUG] Backing off for {backoff} seconds before retrying.")
+            await asyncio.sleep(backoff)
+
+        await asyncio.sleep(POLL_INTERVAL)
+
+###############
+# APP STARTUP #
+###############
+
+##########
+# ROUTES #
+##########
