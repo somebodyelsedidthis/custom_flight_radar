@@ -219,6 +219,15 @@ async def poll_aircraft():
 # APP STARTUP #
 ###############
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    state['aerodromes'] = await get_aerodromes(state['lat'], state['lon'], RADIUS_DEG, AIRPORT_TYPES)
+    asyncio.create_task(poll_aircraft())
+    yield
+
+app = FastAPI(lifespan=lifespan)
+app.mount('/static', StaticFiles(directory='static'), name='static')
+
 ##########
 # ROUTES #
 ##########
