@@ -12,6 +12,7 @@ import urllib.request
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, RedirectResponse
 import asyncio
 from contextlib import asynccontextmanager
 
@@ -33,6 +34,13 @@ api = OpenSkyApi(token_manager=TokenManager.from_json_file('credentials.json'))
 g = geocoder.ip('me')
 LAT_IP = g.latlng[0]
 LON_IP = g.latlng[1]
+
+SAVED_LOCATIONS = {
+    '1': {'lat': LAT_IP,    'lon': LON_IP,       'name': 'My Location (IP)'},
+    '2': {'lat': 0.000000,  'lon': 0.000000,     'name': 'A'},
+    '3': {'lat': 1.352083,  'lon': 103.819839,   'name': 'B'},
+    '4': {'lat': 40.712776, 'lon': -74.005974,   'name': 'C'},
+}
 
 ##################
 # AERODROME DATA #
@@ -231,3 +239,69 @@ app.mount('/static', StaticFiles(directory='static'), name='static')
 ##########
 # ROUTES #
 ##########
+
+@app.get('/')
+def root():
+    """Serve the frontend HTML page."""
+    return FileResponse('static/index.html')
+
+@app.get('/app/init')
+async def get_init():
+    """Called once on page load to get initial data."""
+    return {
+        'location':      SAVED_LOCATIONS,
+        'location_key':  state['location_key'],
+        'lat':           state['lat'],
+        'lon':           state['lon'],
+        'radius':        RADIUS_DEG,
+        'aerodromes':    state['aerodromes'],
+        'aircraft':      state['aircraft'],
+        'poll_interval': POLL_INTERVAL,
+    }
+
+@app.post('/api/location/{key}')
+async def set_location(key: str):
+    """Switch the active location, refetch aerodromes, broadcast reset."""
+    if key not in SAVED_LOCATIONS:
+        return {'error': 'Unknown location key'}
+
+    loc = SAVED_LOCATIONS[key]
+    state['lat'] = loc['lat']
+    state['lon'] = loc['lon']
+    state['location_key'] = key
+    state['aircraft'] = []
+    state['aerodromes'] = await get_aerodromes(loc['lat'], loc['lon'])
+
+    # Broad location change to all clients
+
+    await broadcast({
+        'type': 'location_change',
+        'location_key': key,
+        'lat': loc['lat'],
+        'lon': loc['lon'],
+        'radius': RADIUS_DEG,
+        'loc_name': loc['name'],
+        'aerodromes': state['aerodromes'],
+        })
+
+    # Fetch aircraft data immediately after location change
+    aircraft = await fetch_aircraft(loc['lat'], loc['lon'], RADIUS_DEG)
+    state['aircraft'] = aircraft
+    await broadcast({
+        'type': 'aircraft_update',
+        'aircraft': aircraft,
+        'interval': POLL_INTERVAL
+    })
+
+    return {'ok': True}
+
+@app.websocket('/ws')
+async def websocket_endpoint(ws: WebSocket):
+    await ws.accept()
+    connected_clients.append(ws)
+    try:
+        while True:
+            await ws.receive_text()  # keep connection alive; we only push, not pull
+    except WebSocketDisconnect:
+        if ws in connected_clients:
+            connected_clients.remove(ws)
