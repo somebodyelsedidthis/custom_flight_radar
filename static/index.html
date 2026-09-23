@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flight Radar</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="map"></div>
+
+    <!-- Location Selector -->
+    <div id="location-bar">
+        <span id="location-label">Location:</span>
+        <div id="location-buttons"></div>
+    </div>
+
+    <!-- Aircraft count -->
+    <div id="status-bar">
+        <span id="aircraft-count">-</span> aircraft in range
+        &nbsp;·&nbsp;
+        Last updated: <span id="last-updated">-</span>
+    </div>
+
+    <!-- Click-to-detail panel -->
+    <div id="detail-panel" class="hidden">
+        <button id="detail-close">✕</button>
+        <h2 id="detail-callsign"></h2>
+        <table id="detail-table"></table>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>
